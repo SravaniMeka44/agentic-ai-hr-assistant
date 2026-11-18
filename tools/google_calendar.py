@@ -1,0 +1,487 @@
+
+from datetime import datetime, timedelta, time
+from email.utils import parseaddr
+from zoneinfo import ZoneInfo
+
+from langchain.tools import tool
+from langgraph.types import interrupt
+
+from google_auth import get_calendar_service
+
+
+# ========================================
+# CONFIGURATION
+# ========================================
+
+TIMEZONE = ZoneInfo("Europe/Berlin")
+
+HR_NAME = "Sravani Meka"
+HR_DESIGNATION = "HR Recruitment Team"
+COMPANY_NAME = "NovaTech AI Solutions"
+
+WORK_START = time(9, 0)
+WORK_END = time(17, 0)
+
+
+# ========================================
+# TOOL 1: GET EVENTS FOR ONE DAY
+# ========================================
+
+@tool
+def get_calendar_events(date: str) -> str:
+    """
+    Get Google Calendar events for one date.
+
+    Date format: YYYY-MM-DD.
+    """
+
+    try:
+        day = datetime.strptime(
+            date, "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return "Error: Date must be YYYY-MM-DD."
+
+    start = datetime.combine(
+        day,
+        time.min,
+        tzinfo=TIMEZONE
+    )
+
+    end = datetime.combine(
+        day + timedelta(days=1),
+        time.min,
+        tzinfo=TIMEZONE
+    )
+
+    service = get_calendar_service()
+    events = []
+    page_token = None
+
+    while True:
+        response = service.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=2500,
+            pageToken=page_token
+        ).execute()
+
+        events.extend(response.get("items", []))
+        page_token = response.get("nextPageToken")
+
+        if not page_token:
+            break
+
+    if not events:
+        return f"No events found on {date}."
+
+    output = []
+
+    for event in events:
+        title = event.get("summary", "Untitled Event")
+
+        event_start = event["start"].get(
+            "dateTime",
+            event["start"].get("date")
+        )
+
+        event_end = event["end"].get(
+            "dateTime",
+            event["end"].get("date")
+        )
+
+        output.append(
+            f"Event: {title}\n"
+            f"Start: {event_start}\n"
+            f"End: {event_end}\n"
+        )
+
+    return "\n".join(output)
+
+
+# ========================================
+# TOOL 2: GET EVENTS FOR DATE RANGE
+# ========================================
+
+@tool
+def get_calendar_events_range(
+    start_date: str,
+    end_date: str
+) -> str:
+    """
+    Retrieve Google Calendar events for a date range.
+
+    Both dates use YYYY-MM-DD.
+    The end date is inclusive.
+    """
+
+    try:
+        start_day = datetime.strptime(
+            start_date, "%Y-%m-%d"
+        ).date()
+
+        end_day = datetime.strptime(
+            end_date, "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+        return "Error: Dates must be YYYY-MM-DD."
+
+    if end_day < start_day:
+        return "Error: End date cannot precede start date."
+
+    start = datetime.combine(
+        start_day,
+        time.min,
+        tzinfo=TIMEZONE
+    )
+
+    end = datetime.combine(
+        end_day + timedelta(days=1),
+        time.min,
+        tzinfo=TIMEZONE
+    )
+
+    service = get_calendar_service()
+
+    all_events = []
+    page_token = None
+
+    while True:
+        response = service.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=2500,
+            pageToken=page_token
+        ).execute()
+
+        all_events.extend(response.get("items", []))
+        page_token = response.get("nextPageToken")
+
+        if not page_token:
+            break
+
+    if not all_events:
+        return (
+            f"No events found between "
+            f"{start_date} and {end_date}."
+        )
+
+    output = []
+
+    for event in all_events:
+        title = event.get("summary", "Untitled Event")
+
+        event_start = event["start"].get(
+            "dateTime",
+            event["start"].get("date")
+        )
+
+        event_end = event["end"].get(
+            "dateTime",
+            event["end"].get("date")
+        )
+
+        output.append(
+            f"Event: {title}\n"
+            f"Start: {event_start}\n"
+            f"End: {event_end}\n"
+        )
+
+    return "\n".join(output)
+
+
+# ========================================
+# TOOL 3: CREATE INTERVIEW INVITATION
+# ========================================
+
+@tool
+def create_calendar_event(
+    candidate_name: str,
+    role: str,
+    attendee_email: str,
+    start_time: str,
+    end_time: str,
+    description: str = ""
+) -> str:
+    """
+    Create a professional interview invitation.
+
+    Required:
+    - candidate_name: Candidate name
+    - role: Interview job role
+    - attendee_email: Candidate email
+    - start_time: ISO 8601 with timezone offset
+    - end_time: ISO 8601 with timezone offset
+
+    Interviews are Monday-Friday, 09:00-17:00 Berlin.
+
+    The invitation message is generated by this tool.
+    Do not pass another invitation in description.
+
+    Human approval is required before event creation.
+    """
+
+    # ------------------------------------
+    # 1. VALIDATE CANDIDATE DETAILS
+    # ------------------------------------
+
+    candidate_name = candidate_name.strip()
+    role = role.strip()
+    attendee_email = attendee_email.strip()
+
+    if not candidate_name:
+        return "Error: Candidate name is required."
+
+    if not role:
+        return "Error: Job role is required."
+
+    parsed_email = parseaddr(attendee_email)[1]
+
+    if (
+        parsed_email != attendee_email
+        or attendee_email.count("@") != 1
+        or "." not in attendee_email.split("@")[-1]
+        or any(c.isspace() for c in attendee_email)
+    ):
+        return "Error: Invalid candidate email."
+
+    # ------------------------------------
+    # 2. VALIDATE DATE AND TIME
+    # ------------------------------------
+
+    try:
+        start = datetime.fromisoformat(start_time)
+        end = datetime.fromisoformat(end_time)
+    except ValueError:
+        return "Error: Invalid ISO 8601 datetime."
+
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or start.utcoffset() is None
+        or end.utcoffset() is None
+    ):
+        return "Error: Timezone offsets are required."
+
+    if end <= start:
+        return "Error: End must be after start."
+
+    start_local = start.astimezone(TIMEZONE)
+    end_local = end.astimezone(TIMEZONE)
+
+    if start_local <= datetime.now(TIMEZONE):
+        return "Error: Interview must be in the future."
+
+    if start_local.date() != end_local.date():
+        return (
+            "Error: Interview must start and end "
+            "on the same day."
+        )
+
+    # Monday = 0, Sunday = 6
+    if start_local.weekday() >= 5:
+        return (
+            "Error: Interviews are allowed only "
+            "Monday through Friday."
+        )
+
+    if (
+        start_local.time() < WORK_START
+        or end_local.time() > WORK_END
+    ):
+        return (
+            "Error: Interview must be between "
+            "09:00 and 17:00 Europe/Berlin."
+        )
+
+    # ------------------------------------
+    # 3. BUILD EVENT TITLE
+    # ------------------------------------
+
+    event_title = (
+        f"{role} Interview - {candidate_name} "
+        f"| {COMPANY_NAME}"
+    )
+
+    # ------------------------------------
+    # 4. BUILD INVITATION MESSAGE ONCE
+    # ------------------------------------
+
+    interview_date = start_local.strftime(
+        "%A, %d %B %Y"
+    )
+
+    interview_start = start_local.strftime("%H:%M")
+    interview_end = end_local.strftime("%H:%M")
+
+    invitation_message = (
+        f"Dear {candidate_name},\n\n"
+
+        f"Thank you for your application for the "
+        f"{role} position at {COMPANY_NAME}.\n\n"
+
+        "We appreciate the time and effort you "
+        "invested in your application. "
+        "We would like to invite you for an interview "
+        "to learn more about your experience, "
+        "technical skills, and career aspirations.\n\n"
+
+        "Interview Details:\n"
+        f"Position: {role}\n"
+        f"Date: {interview_date}\n"
+        f"Time: {interview_start} - {interview_end}\n"
+        "Timezone: Europe/Berlin\n\n"
+
+        "We look forward to speaking with you "
+        "and discussing this opportunity.\n\n"
+
+        "Best regards,\n"
+        f"{HR_NAME}\n"
+        f"{HR_DESIGNATION}\n"
+        f"{COMPANY_NAME}"
+    )
+
+    # NOTE:
+    # description is intentionally not appended.
+    # The LLM might otherwise insert an entire
+    # second invitation and duplicate the message.
+
+    # ------------------------------------
+    # 5. HUMAN APPROVAL
+    # ------------------------------------
+
+    approval = interrupt({
+        "action": "create_calendar_event",
+        "candidate_name": candidate_name,
+        "role": role,
+        "attendee_email": attendee_email,
+        "title": event_title,
+        "start_time": start_local.isoformat(),
+        "end_time": end_local.isoformat(),
+        "description": invitation_message
+    })
+
+    if approval != "approve":
+        return (
+            "Interview scheduling cancelled. "
+            "No calendar event was created."
+        )
+
+    # ------------------------------------
+    # 6. CONNECT TO GOOGLE CALENDAR
+    # ------------------------------------
+
+    service = get_calendar_service()
+
+    # ------------------------------------
+    # 7. CHECK FOR OVERLAPPING EVENTS
+    # ------------------------------------
+
+    # This checks the primary calendar immediately
+    # before creation. Only events marked busy count.
+    overlapping_events = []
+    page_token = None
+
+    while True:
+        response = service.events().list(
+            calendarId="primary",
+            timeMin=start_local.isoformat(),
+            timeMax=end_local.isoformat(),
+            singleEvents=True,
+            maxResults=2500,
+            pageToken=page_token
+        ).execute()
+
+        for existing in response.get("items", []):
+            if existing.get("status") == "cancelled":
+                continue
+
+            if existing.get("transparency") == "transparent":
+                continue
+
+            overlapping_events.append(existing)
+
+        page_token = response.get("nextPageToken")
+
+        if not page_token:
+            break
+
+    if overlapping_events:
+        return (
+            "Interview was not created because "
+            "the requested time overlaps with an "
+            "existing busy calendar event. "
+            "Please choose another time."
+        )
+
+    # ------------------------------------
+    # 8. PREPARE CALENDAR EVENT
+    # ------------------------------------
+
+    event_body = {
+        "summary": event_title,
+        "description": invitation_message,
+        "start": {
+            "dateTime": start_local.isoformat(),
+            "timeZone": "Europe/Berlin"
+        },
+        "end": {
+            "dateTime": end_local.isoformat(),
+            "timeZone": "Europe/Berlin"
+        },
+        "attendees": [
+            {"email": attendee_email}
+        ]
+    }
+
+    # ------------------------------------
+    # 9. CREATE EVENT AFTER APPROVAL
+    # ------------------------------------
+
+    event = service.events().insert(
+        calendarId="primary",
+        body=event_body,
+        sendUpdates="all"
+    ).execute()
+
+    # ------------------------------------
+    # 10. RETURN RESULT
+    # ------------------------------------
+
+    return (
+        "Interview created successfully!\n"
+        f"Candidate: {candidate_name}\n"
+        f"Role: {role}\n"
+        f"Date: {interview_date}\n"
+        f"Time: {interview_start} - {interview_end}\n"
+        f"Candidate Email: {attendee_email}\n"
+        f"Company: {COMPANY_NAME}\n"
+        "Google Calendar invitation notifications "
+        "were requested; delivery is not confirmed.\n"
+        f"Event ID: {event.get('id')}\n"
+        f"Calendar Link: {event.get('htmlLink')}"
+    )
+
+
+# ========================================
+# DIRECT TEST
+# ========================================
+
+if __name__ == "__main__":
+
+    today = datetime.now(TIMEZONE).date().isoformat()
+
+    print(f"\nFetching events for {today}...\n")
+
+    result = get_calendar_events.invoke({
+        "date": today
+    })
+
+    print(result)

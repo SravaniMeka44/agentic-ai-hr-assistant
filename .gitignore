@@ -1,0 +1,39 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Google OAuth credentials and tokens
+credentials.json
+token.json
+client_secret*.json
+*token*.json
+*credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and local data
+*.log
+logs/
+data/
+*.db
+*.sqlite3
+
+# Local exports
+exports/
+*.csv
+*.xlsx
