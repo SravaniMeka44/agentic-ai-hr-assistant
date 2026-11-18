@@ -1,8 +1,3 @@
-# agentic-ai-hr-assistant
-AI-powered HR recruitment assistant using LangChain, LangGraph, Google Calendar and Docker
-
-
-
 # Agentic AI HR Recruitment Assistant
 
 An AI-powered HR recruitment assistant built using LangChain, LangGraph, OpenAI, Google Calendar API, and Docker.
